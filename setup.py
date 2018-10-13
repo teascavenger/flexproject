@@ -1,20 +1,16 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="flexdata",
-    package_dir={'flexdata': 'flexdata'},
+    name="flextomo",
+    package_dir={'flextomo': 'flextomo'},
     packages=find_packages(),
 
     install_requires=[
     "numpy",
     "astra-toolbox",
-    "tqdm",
-    "imageio",
-    "tifffile",
-    "psutil",
-    "toml",
-    "transforms3d",
-    "paramiko"],
+    "tqdm",  
+    "scipy",
+    "flexdata"],
 
     version='0.0.1',
 )
