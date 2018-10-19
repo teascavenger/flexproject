@@ -11,18 +11,18 @@ We will do our best to be memmap compatible and make sure that large data will n
 
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>> Imports >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-import numpy
-import sys
-import random
-import scipy 
+import numpy                # arithmetics, arrays
+import sys                  # error info
+import traceback            # errors errors
+import random               # random generator for blocking
+import scipy                # minimizaer used in Students-T
 from tqdm import tqdm       # progress bar
 
-import astra
-import astra.experimental as asex
+import astra                       # The mother of tomography
+import astra.experimental as asex  # The ugly offspring 
 
 from flexdata import io     # geometry to astra conversions
 from flexdata import display# show images
-import traceback
 
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>> Global vars >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
           
@@ -81,11 +81,14 @@ def backproject( projections, volume, geometry, algorithm = 'BP3D_CUDA'):
     global settings
     block_number = settings['block_number']
     mode = settings['mode']
-    
+        
     # Check if projections should be subsampled:
     sam = geometry['proj_sample']
     if sum(sam) > 3:
-        projections = projections[sam[0], sam[1], sam[2]]
+        projections = projections[::sam[0], ::sam[1], ::sam[2]]
+        
+    # Weight correction    
+    prj_weight = _astra_norm_(projections, volume, geometry, algorithm)
     
     # If algorithm is FDK we use single-block projection unless data is a memmap
     if (block_number == 1) | ((algorithm == 'FDK_CUDA') & (not isinstance(projections, numpy.memmap))):
@@ -98,7 +101,14 @@ def backproject( projections, volume, geometry, algorithm = 'BP3D_CUDA'):
         
         # Progress bar:
         pbar = tqdm(total=1)
+
+        projections *= prj_weight
+        
+        # ASTRA here...
         _backproject_block_add_(projections, volume, proj_geom, vol_geom, algorithm)
+
+        projections /= prj_weight
+        
         pbar.update(1)
         pbar.close()
         
@@ -119,9 +129,9 @@ def backproject( projections, volume, geometry, algorithm = 'BP3D_CUDA'):
             if index is []: break
             
             proj_geom = io.astra_proj_geom(geometry, projections.shape, index)    
-            block = projections[:, index,:]
+            block = projections[:, index,:] * block_number * prj_weight
             block = _contiguous_check_(block)
-            
+
             # Backproject:    
             _backproject_block_add_(block, volume, proj_geom, vol_geom, algorithm)  
             
@@ -201,39 +211,40 @@ def SIRT( projections, volume, geometry, iterations):
     global settings
     preview = settings['preview']
     norm_update = settings['norm_update']
-    norm = settings['norm']
     
     # Sampling:
     samp = geometry['proj_sample']
-    anisotropy = geometry['vol_sample']
     
     shp = numpy.array(projections.shape)
     shp //= samp
-
-    # TODO: Test this!!!
-    prj_weight = 1 / (shp[1] * numpy.prod(anisotropy) * max(volume.shape)) 
-                    
+               
     # Initialize L2:
-    norm = []   
+    settings['norm'] = []   
 
     print('Feeling SIRTy...')
     
-    for ii in tqdm(range(iterations)):
+    # Switch off progress bar if preview is on...
+    if preview: 
+        ncols = 0
+    else:
+        ncols = 50
+        
+    for ii in tqdm(range(iterations),ncols=ncols):
     
         # Update volume:
         if sum(samp) > 3:
-            proj = projections[::samp[0], ::samp[1], ::samp[2]]
-            L2_step(proj, prj_weight, volume, geometry)
+            
+            L2_step(projections[::samp[0], ::samp[1], ::samp[2]], volume, geometry)
             
         else:
-            L2_step(projections, prj_weight, volume, geometry)
+            L2_step(projections, volume, geometry)
             
         # Preview
         if preview:
             display.display_slice(volume, dim = 1)
             
     if norm_update:   
-         display.plot(norm, semilogy = True, title = 'Resudual L2')   
+         display.plot(settings['norm'], semilogy = True, title = 'Resudual L2')   
    
 def EM( projections, volume, geometry, iterations):
     """
@@ -242,7 +253,6 @@ def EM( projections, volume, geometry, iterations):
     global settings
     preview = settings['preview']
     norm_update = settings['norm_update']
-    norm = settings['norm']
     
     # Make sure that the volume is positive:
     if volume.max() <= 0: 
@@ -253,21 +263,28 @@ def EM( projections, volume, geometry, iterations):
     projections[projections < 0] = 0
 
     # Initialize L2:
-    norm= []
+    settings['norm'] = []
             
     print('Em Emm Emmmm...')
     
-    for ii in tqdm(range(iterations)):
+    # Switch off progress bar if preview is on...
+    if preview: 
+        ncols = 0
+    else:
+        ncols = 50
+        
+    # Go!    
+    for ii in tqdm(range(iterations), ncols = ncols):
          
         # Update volume:
-        EM_step(projections, 1, volume, geometry)
+        EM_step(projections, volume, geometry)
                     
         # Preview
         if preview:
             display.display_slice(volume, dim = 1)
             
     if norm_update:   
-         display.plot(norm, semilogy = True, title = 'Resudual norm')      
+         display.plot(settings['norm'], semilogy = True, title = 'Resudual norm')      
 
 def FISTA( projections, volume, geometry, iterations):
     '''
@@ -276,7 +293,6 @@ def FISTA( projections, volume, geometry, iterations):
     global settings
     preview = settings['preview']
     norm_update = settings['norm_update']
-    norm = settings['norm']
     
     # Sampling:
     samp = geometry['proj_sample']
@@ -288,7 +304,7 @@ def FISTA( projections, volume, geometry, iterations):
     prj_weight = 1 / (shp[1] * numpy.prod(anisotropy) * max(volume.shape)) 
                     
     # Initialize L2:
-    norm = []   
+    settings['norm'] = []
     t = 1
     
     volume_t = volume.copy()
@@ -296,7 +312,13 @@ def FISTA( projections, volume, geometry, iterations):
 
     print('FISTING in progress...')
         
-    for ii in tqdm(range(iterations)):
+    # Switch off progress bar if preview is on...
+    if preview: 
+        ncols = 0
+    else:
+        ncols = 50
+        
+    for ii in tqdm(range(iterations), ncols = ncols):
     
         # Update volume:
         if sum(samp) > 3:
@@ -304,14 +326,14 @@ def FISTA( projections, volume, geometry, iterations):
             FISTA_step(proj, prj_weight, volume, volume_old, volume_t, t, geometry)
         
         else:
-            FISTA_step(projections, prj_weight, volume, volume_old, volume_t, t, geometry)
+            FISTA_step(projections, volume, volume_old, volume_t, t, geometry)
         
         # Preview
         if preview:
             display.display_slice(volume, dim = 1)
             
     if norm_update:   
-         display.plot(norm, semilogy = True, title = 'Resudual norm')   
+         display.plot(settings['norm'], semilogy = True, title = 'Resudual norm')   
          
 def MULTI_SIRT( projections, volume, geometries, iterations):
     """
@@ -331,7 +353,13 @@ def MULTI_SIRT( projections, volume, geometries, iterations):
 
     print('Doing SIRT`y things...')
 
-    for ii in tqdm(range(iterations)):
+    # Switch off progress bar if preview is on...
+    if preview: 
+        ncols = 0
+    else:
+        ncols = 50
+        
+    for ii in tqdm(range(iterations), ncols = ncols):
         
         norm = 0
         for ii, proj in enumerate(projections):
@@ -340,7 +368,7 @@ def MULTI_SIRT( projections, volume, geometries, iterations):
             prj_weight = 1 / (proj.shape[1] * max(volume.shape)) 
     
             # Update volume:
-            L2_step(proj, prj_weight, volume, geometries[ii])
+            L2_step(proj, volume, geometries[ii])
                                     
         # Preview
         if preview:
@@ -363,7 +391,7 @@ def MULTI_PWLS( projections, volume, geometries, iterations = 10, student = Fals
     fac = volume.shape[2] * geometries[0]['img_pixel'] * numpy.sqrt(2)
 
     print('PWLS-ing in progress...')
-                    
+                          
     # Iterations:
     for ii in tqdm(range(iterations)):
     
@@ -423,17 +451,18 @@ def MULTI_PWLS( projections, volume, geometries, iterations = 10, student = Fals
         
     display.plot(numpy.array(norm), semilogy=True)     
 
-def L2_step( projections, prj_weight, volume, geometry):
+def L2_step( projections, volume, geometry):
     """
     A single L2 minimization step. Supports blocking and subsets.
     """
     global settings
-    norm = settings['norm']
     norm_update = settings['norm_update']
     block_number = settings['block_number']
     bounds = settings['bounds']
     poisson_weight = settings['poisson_weight']
     mode = settings['mode']
+    
+    prj_weight = _astra_norm_(projections, volume, geometry, 'BP3D_CUDA')
       
     # Initialize ASTRA geometries:
     vol_geom = io.astra_vol_geom(geometry, volume.shape)      
@@ -472,9 +501,9 @@ def L2_step( projections, prj_weight, volume, geometry):
                 
         # L2 norm (use the last block to update):
         if norm_update:
-            norm.append(numpy.sqrt((block ** 2).mean()))
+            settings['norm'].append(numpy.sqrt((block ** 2).mean()))
         else:
-            norm = []
+            settings['norm'] = []
           
         # Project
         _backproject_block_add_(block, volume, proj_geom, vol_geom, 'BP3D_CUDA')    
@@ -483,17 +512,18 @@ def L2_step( projections, prj_weight, volume, geometry):
     if bounds:
         numpy.clip(volume, a_min = bounds[0], a_max = bounds[1], out = volume)   
     
-def FISTA_step( projections, prj_weight, vol, vol_old, vol_t, t, geometry):
+def FISTA_step(projections, vol, vol_old, vol_t, t, geometry):
     """
     A single FISTA step. Supports blocking and subsets.
     """
     global settings
-    norm = settings['norm']
     norm_update = settings['norm_update']
     block_number = settings['block_number']
     bounds = settings['bounds']
     poisson_weight = settings['poisson_weight']
     mode = settings['mode']
+    
+    prj_weight = _astra_norm_(projections, vol, geometry, 'BP3D_CUDA')
     
     # Initialize ASTRA geometries:
     vol_geom = io.astra_vol_geom(geometry, vol.shape)      
@@ -538,10 +568,10 @@ def FISTA_step( projections, prj_weight, vol, vol_old, vol_t, t, geometry):
                 
         # L2 norm (use the last block to update):
         if norm_update:
-            norm.append(numpy.sqrt((block ** 2).mean()))
+            settings['norm'].append(numpy.sqrt((block ** 2).mean()))
             
         else:
-            norm = []
+            settings['norm'] = []
           
         # Project
         _backproject_block_add_(block, vol, proj_geom, vol_geom, 'BP3D_CUDA')   
@@ -552,17 +582,17 @@ def FISTA_step( projections, prj_weight, vol, vol_old, vol_t, t, geometry):
     if bounds is not None:
         numpy.clip(vol, a_min = bounds[0], a_max = bounds[1], out = vol)  
 
-def EM_step( projections, prj_weight, volume, geometry):
+def EM_step(projections, volume, geometry):
     """
     A single Expecrtation Maximization step. Supports blocking and subsets.
     """  
     global settings
-    norm = settings['norm']
     norm_update = settings['norm_update']
     block_number = settings['block_number']
     bounds = settings['bounds']
-    poisson_weight = settings['poisson_weight']
     mode = settings['mode']
+    
+    prj_weight = _astra_norm_(projections, volume, geometry, 'BP3D_CUDA') * 2
       
     # Initialize ASTRA geometries:
     vol_geom = io.astra_vol_geom(geometry, volume.shape)      
@@ -584,30 +614,46 @@ def EM_step( projections, prj_weight, volume, geometry):
             block = (projections[:, index, :]).copy()
         
         # Reserve memory for a forward projection (keep it separate):
-        synth = _contiguous_check_(numpy.zeros_like(block))
+        resid = _contiguous_check_(numpy.zeros_like(block))
         
         # Forwardproject:
-        _forwardproject_block_add_(synth, volume, proj_geom, vol_geom)   
+        _forwardproject_block_add_(resid, volume, proj_geom, vol_geom)   
   
         # Compute residual:        
-        synth[synth < synth.max() / 100] = numpy.inf  
-        synth = (block / synth)
+        resid[resid < resid.max() / 100] = numpy.inf  
+        resid = (block / resid)
                     
         # L2 norm (use the last block to update):
         if norm_update:
-            norm.append(synth[synth > 0].std())
+            display.display_slice(resid, dim = 1)
+            settings['norm'].append(resid[resid > 0].std())
             
         else:
-            norm = [] 
+            settings['norm'] = [] 
           
         # Project
-        _backproject_block_mult_(synth * prj_weight * block_number, volume, proj_geom, vol_geom, 'BP3D_CUDA')    
+        _backproject_block_mult_(resid * prj_weight * block_number, volume, proj_geom, vol_geom, 'BP3D_CUDA')    
     
     # Apply bounds
     if bounds:
         numpy.clip(volume, a_min = bounds[0], a_max = bounds[1], out = volume)               
-          
-def _backproject_block_add_( projections, volume, proj_geom, vol_geom, algorithm = 'BP3D_CUDA', negative = False):
+        
+def _astra_norm_(projections, volume, geometry, algorithm):
+    """
+    Compute a normalization factor in backprojection operator....
+    """
+    # This normalization is not done at ASTRA level at the moment:
+    if algorithm == 'BP3D_CUDA':
+        sam = geometry['proj_sample']
+        anisotropy = geometry['vol_sample']
+        
+        pix = (geometry['img_pixel']**4 * anisotropy[0] * anisotropy[1] * anisotropy[2] * anisotropy[2])
+        return 1 / (projections.shape[1] // sam[1] * pix * max(volume.shape)) 
+    
+    else:
+        return 1        
+        
+def _backproject_block_add_(projections, volume, proj_geom, vol_geom, algorithm = 'BP3D_CUDA', negative = False):
     """
     Additive backprojection of a single block. 
     Use negative = True if you want subtraction instead of addition.
