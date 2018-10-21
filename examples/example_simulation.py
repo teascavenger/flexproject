@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Test forward / backward projection of a 2D phantom.
+Test forward / backward projection of a 2D phantom. Various algorithms: EM, SIRT, FISTA. 
+Effect of subset version of SIRT.
 """
 #%% Imports
 
@@ -34,28 +35,28 @@ display.display_slice(proj, title = 'Sinogram')
 
 #%% Unfiltered back-project
 
+# Make volume:
 vol_rec = numpy.zeros_like(vol)
 
+# Backproject:
 project.settings['block_number'] = 1
-
 project.backproject(proj, vol_rec, geometry)
+
 display.display_slice(vol_rec, title = 'Backprojection')
 
 #%% Reconstruct
 
+# Make volume:
 vol_rec = numpy.zeros_like(vol)
 
+# Use FDK:
 project.FDK(proj, vol_rec, geometry)
-display.display_slice(vol_rec, title = 'Reconstruction')
 
-#%% Use EM:
+display.display_slice(vol_rec, title = 'FDK')
+
+#%% Use Expectation Maximization:
 
 vol_rec = numpy.zeros_like(vol)
-
-project.settings['bounds'] = [0,5]
-project.settings['norm_update'] = True
-project.settings['block_number'] = 1
-project.settings['mode'] = 'equidistant'
 
 project.EM(proj, vol_rec, geometry, iterations = 10)
 
@@ -76,3 +77,16 @@ vol = numpy.zeros([1, 512, 512], dtype = 'float32')
 project.FISTA(proj, vol, geometry, iterations = 10)
 
 display.display_slice(vol, title = 'FISTA')
+
+#%% SIRT with Subsets and non-negativity:
+
+project.settings['bounds'] = [0, 10]
+project.settings['block_number'] = 10
+project.settings['mode'] = 'equidistant'
+
+vol = numpy.zeros([1, 512, 512], dtype = 'float32')
+
+project.SIRT(proj, vol, geometry, iterations = 10)
+
+display.display_slice(vol, title = 'SIRT')
+

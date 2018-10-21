@@ -29,6 +29,7 @@ from flexdata import display# show images
 # Here I will put some settings:
 
 settings = {
+'progress_bar' : True,      # Show progress bar. Now works only in FDK, backproject and forwardproject
 'block_number' : 10,        # subsets or blocks into which the projections are divided
 'mode' : 'sequential',      # This field can be 'random', 'sequential' or 'equidistant'
 'poisson_weight' : False,   # use weights of projection pixels according to a Poisson statistics
@@ -41,7 +42,7 @@ settings = {
 
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>> Methods >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-def init_volume( projections, geometry = None):
+def init_volume(projections, geometry = None):
     """
     Initialize a standard volume array.
     """          
@@ -100,7 +101,7 @@ def backproject( projections, volume, geometry, algorithm = 'BP3D_CUDA'):
         proj_geom = io.astra_proj_geom(geometry, projections.shape)    
         
         # Progress bar:
-        pbar = tqdm(total=1)
+        pbar = _pbar_start_(1)
 
         projections *= prj_weight
         
@@ -109,8 +110,8 @@ def backproject( projections, volume, geometry, algorithm = 'BP3D_CUDA'):
 
         projections /= prj_weight
         
-        pbar.update(1)
-        pbar.close()
+        _pbar_update_(pbar)
+        _pbar_close_(pbar)
         
     else:   
         # Here is the multi-block version:
@@ -119,7 +120,7 @@ def backproject( projections, volume, geometry, algorithm = 'BP3D_CUDA'):
         vol_geom = io.astra_vol_geom(geometry, volume.shape)
         
         # Progress bar:
-        pbar = tqdm(unit = 'block', total=block_number)
+        pbar = _pbar_start_(block_number, 'block')
         
         # Loop over blocks:
         for ii in range(block_number):
@@ -135,9 +136,9 @@ def backproject( projections, volume, geometry, algorithm = 'BP3D_CUDA'):
             # Backproject:    
             _backproject_block_add_(block, volume, proj_geom, vol_geom, algorithm)  
             
-            pbar.update(1)
+            _pbar_update_(pbar)
             
-        pbar.close()
+        _pbar_close_(pbar)
         
         # ASTRA is not aware of the number of blocks:    
         volume /= block_number
@@ -170,10 +171,12 @@ def forwardproject( projections, volume, geometry):
         proj_geom = io.astra_proj_geom(geometry, projections.shape)    
         
         # Progress bar:
-        pbar = tqdm(total=1)
+        pbar = _pbar_start_(1)
+        
         _forwardproject_block_add_(projections, volume, proj_geom, vol_geom)
-        pbar.update(1)
-        pbar.close()
+        
+        _pbar_update_(pbar)
+        _pbar_close_(pbar)
         
     else:   
         # Multi-block:
@@ -182,7 +185,7 @@ def forwardproject( projections, volume, geometry):
         vol_geom = io.astra_vol_geom(geometry, volume.shape)
         
         # Progress bar:
-        pbar = tqdm(unit = 'block', total=block_number)
+        pbar = _pbar_start_(unit = 'block', total=block_number)
         
         # Loop over blocks:
         for ii in range(block_number):
@@ -200,9 +203,9 @@ def forwardproject( projections, volume, geometry):
             
             projections[:, index,:] = block
             
-            pbar.update(1)
+            _pbar_update_(pbar)
             
-        pbar.close()
+        _pbar_close_(pbar)
    
 def SIRT( projections, volume, geometry, iterations):
     """
@@ -229,6 +232,7 @@ def SIRT( projections, volume, geometry, iterations):
     else:
         ncols = 50
         
+    # Iterate:    
     for ii in tqdm(range(iterations),ncols=ncols):
     
         # Update volume:
@@ -365,7 +369,7 @@ def MULTI_SIRT( projections, volume, geometries, iterations):
         for ii, proj in enumerate(projections):
             
             # This weight is half of the normal weight to make sure convergence is ok:
-            prj_weight = 1 / (proj.shape[1] * max(volume.shape)) 
+            #prj_weight = 1 / (proj.shape[1] * max(volume.shape)) 
     
             # Update volume:
             L2_step(proj, volume, geometries[ii])
@@ -467,6 +471,8 @@ def L2_step( projections, volume, geometry):
     # Initialize ASTRA geometries:
     vol_geom = io.astra_vol_geom(geometry, volume.shape)      
     
+    norm = 0
+    
     for ii in range(block_number):
         
         # Create index slice to address projections:
@@ -501,13 +507,14 @@ def L2_step( projections, volume, geometry):
                 
         # L2 norm (use the last block to update):
         if norm_update:
-            settings['norm'].append(numpy.sqrt((block ** 2).mean()))
-        else:
-            settings['norm'] = []
+            norm = numpy.sqrt((block ** 2).mean())
           
         # Project
         _backproject_block_add_(block, volume, proj_geom, vol_geom, 'BP3D_CUDA')    
     
+    if norm_update:
+        settings['norm'].append(norm / block_number)  
+
     # Apply bounds
     if bounds:
         numpy.clip(volume, a_min = bounds[0], a_max = bounds[1], out = volume)   
@@ -535,6 +542,8 @@ def FISTA_step(projections, vol, vol_old, vol_t, t, geometry):
 
     vol[:] = vol_t.copy()
     
+    norm = 0
+    
     for ii in range(block_number):
         
         # Create index slice to address projections:
@@ -560,6 +569,7 @@ def FISTA_step(projections, vol, vol_old, vol_t, t, geometry):
             # Some formula representing the effect of photon starvation...
             block *= numpy.exp(-projections[:, index, :])
             
+        # Normalization of the backprojection (depends on ASTRA):    
         block *= prj_weight * block_number
         
         # Apply ramp to reduce boundary effects:
@@ -568,16 +578,16 @@ def FISTA_step(projections, vol, vol_old, vol_t, t, geometry):
                 
         # L2 norm (use the last block to update):
         if norm_update:
-            settings['norm'].append(numpy.sqrt((block ** 2).mean()))
-            
-        else:
-            settings['norm'] = []
+            norm += numpy.sqrt((block ** 2).mean())
           
         # Project
         _backproject_block_add_(block, vol, proj_geom, vol_geom, 'BP3D_CUDA')   
         
         vol_t[:] = vol + ((t_old - 1) / t) * (vol - vol_old)
-                
+          
+    if norm_update:
+        settings['norm'].append(norm / block_number)    
+        
     # Apply bounds
     if bounds is not None:
         numpy.clip(vol, a_min = bounds[0], a_max = bounds[1], out = vol)  
@@ -597,6 +607,9 @@ def EM_step(projections, volume, geometry):
     # Initialize ASTRA geometries:
     vol_geom = io.astra_vol_geom(geometry, volume.shape)      
     
+    # Norm update:
+    norm = 0
+    
     for ii in range(block_number):
         
         # Create index slice to address projections:
@@ -612,7 +625,7 @@ def EM_step(projections, volume, geometry):
             
         else:
             block = (projections[:, index, :]).copy()
-        
+                    
         # Reserve memory for a forward projection (keep it separate):
         resid = _contiguous_check_(numpy.zeros_like(block))
         
@@ -625,18 +638,36 @@ def EM_step(projections, volume, geometry):
                     
         # L2 norm (use the last block to update):
         if norm_update:
-            display.display_slice(resid, dim = 1)
-            settings['norm'].append(resid[resid > 0].std())
+            res_pos = resid[resid > 0]
+            norm += res_pos.std() / res_pos.mean()
             
-        else:
-            settings['norm'] = [] 
-          
         # Project
         _backproject_block_mult_(resid * prj_weight * block_number, volume, proj_geom, vol_geom, 'BP3D_CUDA')    
+    
+    if norm_update:
+        settings['norm'].append(norm / block_number)
     
     # Apply bounds
     if bounds:
         numpy.clip(volume, a_min = bounds[0], a_max = bounds[1], out = volume)               
+        
+def _pbar_start_(total, unit = 'it'):
+    """
+    If progress_bar is ON, initialize it.
+    """        
+    if settings['progress_bar']:
+        return tqdm(total = total, unit = unit)
+    
+    else:
+        return None
+        
+def _pbar_update_(pbar):
+    if pbar:
+        pbar.update()
+        
+def _pbar_close_(pbar):
+    if pbar:
+        pbar.close()
         
 def _astra_norm_(projections, volume, geometry, algorithm):
     """
@@ -811,7 +842,12 @@ def _block_index_( ii, block_number, length, mode = 'sequential'):
     elif mode == 'equidistant':   
         
         # Index = 0, 2, 1, 3   
-        index = numpy.mod(numpy.arange(length) * block_length, length)
+        if length > block_length:
+            index = numpy.mod(numpy.arange(length) * block_length, length)
+            
+        else:
+            # Equidistant formula doesnt work if block number == 1
+            index = numpy.arange(length)
         
     else:
         raise ValueError('Indexer type not recognized! Use: sequential/random/equidistant')
