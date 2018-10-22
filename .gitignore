@@ -21,3 +21,8 @@ $RECYCLE.BIN/
 # =========================
 # Operating System Files
 # =========================
+flextomo.egg-info/PKG-INFO
+flextomo.egg-info/requires.txt
+*.pyc
+flextomo.egg-info/top_level.txt
+flextomo.egg-info/SOURCES.txt
