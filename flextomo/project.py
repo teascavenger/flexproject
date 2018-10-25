@@ -17,6 +17,7 @@ import traceback            # errors errors
 import random               # random generator for blocking
 import scipy                # minimizaer used in Students-T
 from tqdm import tqdm       # progress bar
+from time import sleep      # pause to allow time for the progress bar to print
 
 import astra                       # The mother of tomography
 import astra.experimental as asex  # The ugly offspring 
@@ -30,7 +31,7 @@ from flexdata import display# show images
 
 settings = {
 'progress_bar' : True,      # Show progress bar. Now works only in FDK, backproject and forwardproject
-'block_number' : 10,        # subsets or blocks into which the projections are divided
+'block_number' : 1,        # subsets or blocks into which the projections are divided
 'mode' : 'sequential',      # This field can be 'random', 'sequential' or 'equidistant'
 'poisson_weight' : False,   # use weights of projection pixels according to a Poisson statistics
 
@@ -92,7 +93,7 @@ def backproject( projections, volume, geometry, algorithm = 'BP3D_CUDA'):
     prj_weight = _astra_norm_(projections, volume, geometry, algorithm)
     
     # If algorithm is FDK we use single-block projection unless data is a memmap
-    if (block_number == 1) | ((algorithm == 'FDK_CUDA') & (not isinstance(projections, numpy.memmap))):
+    if block_number == 1:
         
         projections = _contiguous_check_(projections) 
         
@@ -140,8 +141,8 @@ def backproject( projections, volume, geometry, algorithm = 'BP3D_CUDA'):
             
         _pbar_close_(pbar)
         
-        # ASTRA is not aware of the number of blocks:    
-        volume /= block_number
+    # ASTRA is not aware of the number of blocks:    
+    volume /= block_number
                        
 def forwardproject( projections, volume, geometry):
     """
@@ -225,6 +226,7 @@ def SIRT( projections, volume, geometry, iterations):
     settings['norm'] = []   
 
     print('Feeling SIRTy...')
+    sleep(0.1)
     
     # Switch off progress bar if preview is on...
     if preview: 
@@ -270,6 +272,7 @@ def EM( projections, volume, geometry, iterations):
     settings['norm'] = []
             
     print('Em Emm Emmmm...')
+    sleep(0.1)
     
     # Switch off progress bar if preview is on...
     if preview: 
@@ -315,6 +318,7 @@ def FISTA( projections, volume, geometry, iterations):
     volume_old = volume.copy()
 
     print('FISTING in progress...')
+    sleep(0.1)
         
     # Switch off progress bar if preview is on...
     if preview: 
@@ -356,6 +360,7 @@ def MULTI_SIRT( projections, volume, geometries, iterations):
     norm = []
 
     print('Doing SIRT`y things...')
+    sleep(0.1)
 
     # Switch off progress bar if preview is on...
     if preview: 
@@ -381,7 +386,7 @@ def MULTI_SIRT( projections, volume, geometries, iterations):
     if norm_update:   
          display.plot(norm, semilogy = True, title = 'Resudual norm')        
          
-def MULTI_PWLS( projections, volume, geometries, iterations = 10, student = False, pwls = True, weight_power = 1): 
+def MULTI_PWLS( projections, volume, geometries, iterations = 10, student = False, weight_power = 1): 
     '''
     Penalized Weighted Least Squares based on multiple inputs.
     '''
@@ -395,7 +400,8 @@ def MULTI_PWLS( projections, volume, geometries, iterations = 10, student = Fals
     fac = volume.shape[2] * geometries[0]['img_pixel'] * numpy.sqrt(2)
 
     print('PWLS-ing in progress...')
-                          
+    sleep(0.1)
+                              
     # Iterations:
     for ii in tqdm(range(iterations)):
     
@@ -422,11 +428,11 @@ def MULTI_PWLS( projections, volume, geometries, iterations = 10, student = Fals
                 prj_tmp = numpy.zeros_like(proj)
                 
                 # Compute weights:
-                if pwls & ~ student:
-                    fwp_w = numpy.exp(-proj * weight_power)
+                if student:
+                    fwp_w = numpy.ones_like(proj)
                     
                 else:
-                    fwp_w = numpy.ones_like(proj)
+                    fwp_w = numpy.exp(-proj * weight_power)
                                         
                 #fwp_w = scipy.ndimage.morphology.grey_erosion(fwp_w, size=(3,1,3))
                 
