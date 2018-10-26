@@ -128,21 +128,28 @@ def backproject( projections, volume, geometry, algorithm = 'BP3D_CUDA'):
             
             # Extract a block:
             index = _block_index_(ii, block_number, projections.shape[1], mode)
-            if index is []: break
-            
-            proj_geom = io.astra_proj_geom(geometry, projections.shape, index)    
-            block = projections[:, index,:] * block_number * prj_weight
-            block = _contiguous_check_(block)
-
-            # Backproject:    
-            _backproject_block_add_(block, volume, proj_geom, vol_geom, algorithm)  
+            if len(index) > 0: 
+                
+                proj_geom = io.astra_proj_geom(geometry, projections.shape, index)  
+                
+                # number of projections in a block can vary a bit and FDK is not aware of that...
+                block = projections[:, index,:] * prj_weight * len(index)
+                
+                # BP and FDK behave differently in terms of normalization:
+                if (algorithm == 'BP3D_CUDA'):
+                    block *= block_number
+                    
+                block = _contiguous_check_(block)
+    
+                # Backproject:    
+                _backproject_block_add_(block, volume, proj_geom, vol_geom, algorithm)  
             
             _pbar_update_(pbar)
             
         _pbar_close_(pbar)
         
-    # ASTRA is not aware of the number of blocks:    
-    volume /= block_number
+        # ASTRA is not aware of the number of blocks:    
+        volume /= projections.shape[1]
                        
 def forwardproject( projections, volume, geometry):
     """
@@ -226,7 +233,7 @@ def SIRT( projections, volume, geometry, iterations):
     settings['norm'] = []   
 
     print('Feeling SIRTy...')
-    sleep(0.1)
+    sleep(0.5)
     
     # Switch off progress bar if preview is on...
     if preview: 
@@ -272,7 +279,7 @@ def EM( projections, volume, geometry, iterations):
     settings['norm'] = []
             
     print('Em Emm Emmmm...')
-    sleep(0.1)
+    sleep(0.5)
     
     # Switch off progress bar if preview is on...
     if preview: 
@@ -318,7 +325,7 @@ def FISTA( projections, volume, geometry, iterations):
     volume_old = volume.copy()
 
     print('FISTING in progress...')
-    sleep(0.1)
+    sleep(0.5)
         
     # Switch off progress bar if preview is on...
     if preview: 
@@ -360,7 +367,7 @@ def MULTI_SIRT( projections, volume, geometries, iterations):
     norm = []
 
     print('Doing SIRT`y things...')
-    sleep(0.1)
+    sleep(0.5)
 
     # Switch off progress bar if preview is on...
     if preview: 
@@ -400,7 +407,7 @@ def MULTI_PWLS( projections, volume, geometries, iterations = 10, student = Fals
     fac = volume.shape[2] * geometries[0]['img_pixel'] * numpy.sqrt(2)
 
     print('PWLS-ing in progress...')
-    sleep(0.1)
+    sleep(0.5)
                               
     # Iterations:
     for ii in tqdm(range(iterations)):
@@ -861,7 +868,10 @@ def _block_index_( ii, block_number, length, mode = 'sequential'):
     first = ii * block_length
     last = min((length + 1, (ii + 1) * block_length))
     
-    return index[first:last]        
+    if last <= first:
+        return []
+    else:
+        return index[first:last]        
 
 
 def _studentst_( res, deg = 1, scl = None):
