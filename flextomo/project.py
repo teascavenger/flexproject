@@ -705,9 +705,17 @@ def _backproject_block_add_(projections, volume, proj_geom, vol_geom, algorithm 
     try:
         if negative:
             projections *= -1
-        
+            
+        # If volume is a memmap - create a temporary copy in RAM    
+        if isinstance(volume, numpy.memmap):
+            vol_temp = numpy.ascontiguousarray(volume)
+            
+            vol_id = astra.data3d.link('-vol', vol_geom, vol_temp)    
+        else:
+            vol_id = astra.data3d.link('-vol', vol_geom, volume)    
+                    
         sin_id = astra.data3d.link('-sino', proj_geom, projections)        
-        vol_id = astra.data3d.link('-vol', vol_geom, volume)    
+        
         
         projector_id = astra.create_projector('cuda3d', proj_geom, vol_geom)
         
@@ -718,6 +726,10 @@ def _backproject_block_add_(projections, volume, proj_geom, vol_geom, algorithm 
             asex.accumulate_FDK(projector_id, vol_id, sin_id)               
         else:
             raise ValueError('Unknown ASTRA algorithm type.')
+            
+        if isinstance(volume, numpy.memmap):
+            volume[:] = vol_temp
+            
                          
     except:
         # The idea here is that we try to delete data3d objects even if ASTRA crashed
@@ -789,9 +801,16 @@ def _forwardproject_block_add_( projections, volume, proj_geom, vol_geom, negati
         # We are goint to negate the projections block and not the whole volume:
         if negative:
             projections *= -1
+            
+        # If volume is a memmap - create a temporary copy in RAM    
+        if isinstance(volume, numpy.memmap):
+            vol_temp = numpy.ascontiguousarray(volume)
+            
+            vol_id = astra.data3d.link('-vol', vol_geom, vol_temp)    
+        else:
+            vol_id = astra.data3d.link('-vol', vol_geom, volume)        
                 
         sin_id = astra.data3d.link('-sino', proj_geom, projections)        
-        vol_id = astra.data3d.link('-vol', vol_geom, volume)    
         
         projector_id = astra.create_projector('cuda3d', proj_geom, vol_geom)
         
