@@ -199,19 +199,19 @@ def forwardproject( projections, volume, geometry):
         for ii in range(block_number):
             
             index = _block_index_(ii, block_number, projections.shape[1], mode)
-            if index is []: break
+            if len(index) > 0: 
         
-            # Extract a block:
-            proj_geom = io.astra_proj_geom(geometry, projections.shape, index)    
-            block = projections[:, index,:]
-            block = _contiguous_check_(block)
-            
-            # Backproject:    
-            _forwardproject_block_add_(block, volume, proj_geom, vol_geom)  
-            
-            projections[:, index,:] = block
-            
-            _pbar_update_(pbar)
+                # Extract a block:
+                proj_geom = io.astra_proj_geom(geometry, projections.shape, index)    
+                block = projections[:, index,:]
+                block = _contiguous_check_(block)
+                
+                # Backproject:    
+                _forwardproject_block_add_(block, volume, proj_geom, vol_geom)  
+                
+                projections[:, index,:] = block
+                
+                _pbar_update_(pbar)
             
         _pbar_close_(pbar)
    
@@ -669,7 +669,7 @@ def _pbar_start_(total, unit = 'it'):
     If progress_bar is ON, initialize it.
     """        
     if settings['progress_bar']:
-        return tqdm(total = total, unit = unit)
+        return tqdm(total = total, unit = unit, ascii = True)
     
     else:
         return None
