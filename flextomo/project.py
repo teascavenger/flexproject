@@ -401,6 +401,7 @@ def MULTI_PWLS( projections, volume, geometries, iterations = 10, student = Fals
     global settings
     norm = settings['norm']
     block_number = settings['block_number']
+    mode = settings['mode']
     
     norm = []
 
@@ -424,7 +425,7 @@ def MULTI_PWLS( projections, volume, geometries, iterations = 10, student = Fals
             
             for kk, projs in enumerate(projections):
                 
-                index = _block_index_(jj, block_number, projs.shape[1], 'random')
+                index = _block_index_(jj, block_number, projs.shape[1], mode)
                 
                 proj = numpy.ascontiguousarray(projs[:,index,:])
                 geom = geometries[kk]
@@ -439,7 +440,8 @@ def MULTI_PWLS( projections, volume, geometries, iterations = 10, student = Fals
                     fwp_w = numpy.ones_like(proj)
                     
                 else:
-                    fwp_w = numpy.exp(-proj * weight_power)
+                    me = proj.max() * weight_power / 5
+                    fwp_w = numpy.exp(-proj * weight_power / me)
                                         
                 #fwp_w = scipy.ndimage.morphology.grey_erosion(fwp_w, size=(3,1,3))
                 
@@ -456,7 +458,7 @@ def MULTI_PWLS( projections, volume, geometries, iterations = 10, student = Fals
                 # Mean L for projection
                 L_mean += (prj_tmp**2).mean() 
                 
-            eps = bwp_w.max() / 100    
+            eps = bwp_w.max() / 1000    
             bwp_w[bwp_w < eps] = eps
                 
             volume += vol_tmp / bwp_w
